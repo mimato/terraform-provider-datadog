@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/DataDog/datadog-api-client-go/v2/api/datadog"
-	"github.com/hashicorp/go-cleanhttp"
+	cleanhttp "github.com/hashicorp/go-cleanhttp"
 	"github.com/hashicorp/go-cty/cty"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/logging"
@@ -90,6 +90,38 @@ func Provider() *schema.Provider {
 				Optional:    true,
 				Description: "The API URL. This can also be set via the DD_HOST environment variable. Note that this URL must not end with the `/api/` path. For example, `https://api.datadoghq.com/` is a correct value, while `https://api.datadoghq.com/api/` is not. And if you're working with \"EU\" version of Datadog, use `https://api.datadoghq.eu/`. Other Datadog region examples: `https://api.us5.datadoghq.com/`, `https://api.us3.datadoghq.com/` and `https://api.ddog-gov.com/`. See https://docs.datadoghq.com/getting_started/site/ for all available regions.",
 			},
+			"default_tags": {
+				Type:        schema.TypeList,
+				Optional:    true,
+				MaxItems:    1,
+				Description: "Configuration block with settings for default tags across all resources.",
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"tags": {
+							Type:        schema.TypeMap,
+							Optional:    true,
+							Elem:        &schema.Schema{Type: schema.TypeString},
+							Description: "Resource tags to default across all resources",
+						},
+					},
+				},
+			},
+			"ignore_tags": {
+				Type:        schema.TypeList,
+				Optional:    true,
+				MaxItems:    1,
+				Description: "Configuration block with settings to ignore resource tags across all resources.",
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"keys": {
+							Type:        schema.TypeSet,
+							Optional:    true,
+							Elem:        &schema.Schema{Type: schema.TypeString},
+							Description: "Resource tag keys to ignore across all resources.",
+						},
+					},
+				},
+			},
 			"validate": {
 				Type:         schema.TypeString,
 				Optional:     true,
@@ -155,6 +187,7 @@ func Provider() *schema.Provider {
 					return diags
 				},
 			},
+			// TODO: Add input for default tags and ignore tags
 		},
 
 		ResourcesMap: map[string]*schema.Resource{
@@ -240,6 +273,7 @@ func Provider() *schema.Provider {
 type ProviderConfiguration struct {
 	CommunityClient     *datadogCommunity.Client
 	DatadogApiInstances *utils.ApiInstances
+	TagHelper           *utils.TagHelper
 	Auth                context.Context
 
 	Now func() time.Time
@@ -279,6 +313,37 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 
 	if validate && (apiKey == "" || appKey == "") {
 		return nil, diag.FromErr(errors.New("api_key and app_key must be set unless validate = false"))
+	}
+
+	var defaultTags map[string]string = nil
+	var ignoreTags []string = nil
+	if v, ok := d.GetOk("default_tags"); ok && len(v.([]interface{})) > 0 && v.([]interface{})[0] != nil {
+		m := v.([]interface{})[0].(map[string]interface{})
+		if m == nil {
+			defaultTags = nil
+		} else {
+			if t, ok := m["tags"].(map[string]string); ok {
+				defaultTags = t
+			}
+		}
+	}
+	if v, ok := d.GetOk("ignore_tags"); ok && len(v.([]interface{})) > 0 && v.([]interface{})[0] != nil {
+		m := v.([]interface{})[0].(map[string]interface{})
+		if m == nil {
+			ignoreTags = nil
+		} else {
+			if t, ok := m["keys"].(schema.Set); ok {
+				ignoreTags = make([]string, 0, len(t.List()))
+				for j, k := range t.List() {
+					ignoreTags[j] = k.(string)
+				}
+			}
+		}
+	}
+
+	tagHelper := &utils.TagHelper{
+		DefaultTags: defaultTags,
+		IgnoreTags:  ignoreTags,
 	}
 
 	// Initialize the community client
@@ -418,6 +483,7 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 	return &ProviderConfiguration{
 		CommunityClient:     communityClient,
 		DatadogApiInstances: apiInstances,
+		TagHelper:           tagHelper,
 		Auth:                auth,
 
 		Now: time.Now,
