@@ -555,7 +555,7 @@ func getMonitorFormulaQuerySchema() *schema.Schema {
 	}
 }
 
-func buildMonitorStruct(d utils.Resource) (*datadogV1.Monitor, *datadogV1.MonitorUpdateRequest) {
+func buildMonitorStruct(d utils.Resource, t *utils.TagHelper) (*datadogV1.Monitor, *datadogV1.MonitorUpdateRequest) {
 
 	var thresholds datadogV1.MonitorThresholds
 
@@ -791,8 +791,9 @@ func buildMonitorStruct(d utils.Resource) (*datadogV1.Monitor, *datadogV1.Monito
 		}
 		sort.Strings(tags)
 	}
-	m.SetTags(tags)
-	u.SetTags(tags)
+	allTags := t.GetCombinedTags(tags)
+	m.SetTags(allTags)
+	u.SetTags(allTags)
 
 	return m, u
 }
@@ -881,17 +882,18 @@ func resourceDatadogMonitorCustomizeDiff(ctx context.Context, diff *schema.Resou
 		// Explicitly skip validation
 		return nil
 	}
-	m, _ := buildMonitorStruct(diff)
 
+	providerConf := meta.(*ProviderConfiguration)
+	apiInstances := providerConf.DatadogApiInstances
+	tagHelper := providerConf.TagHelper
+	auth := providerConf.Auth
+	m, _ := buildMonitorStruct(diff, tagHelper)
 	hasID := false
 	id, err := strconv.ParseInt(diff.Id(), 10, 64)
 	if err == nil {
 		hasID = true
 	}
 
-	providerConf := meta.(*ProviderConfiguration)
-	apiInstances := providerConf.DatadogApiInstances
-	auth := providerConf.Auth
 	return retry.RetryContext(ctx, retryTimeout, func() *retry.RetryError {
 		var httpresp *http.Response
 		if hasID {
@@ -912,9 +914,10 @@ func resourceDatadogMonitorCustomizeDiff(ctx context.Context, diff *schema.Resou
 func resourceDatadogMonitorCreate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	providerConf := meta.(*ProviderConfiguration)
 	apiInstances := providerConf.DatadogApiInstances
+	tagHelper := providerConf.TagHelper
 	auth := providerConf.Auth
 
-	m, _ := buildMonitorStruct(d)
+	m, _ := buildMonitorStruct(d, tagHelper)
 	mCreated, httpResponse, err := apiInstances.GetMonitorsApiV1().CreateMonitor(auth, *m)
 	if err != nil {
 		return utils.TranslateClientErrorDiag(err, httpResponse, "error creating monitor")
@@ -1248,9 +1251,10 @@ func resourceDatadogMonitorRead(ctx context.Context, d *schema.ResourceData, met
 func resourceDatadogMonitorUpdate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	providerConf := meta.(*ProviderConfiguration)
 	apiInstances := providerConf.DatadogApiInstances
+	tagHelper := providerConf.TagHelper
 	auth := providerConf.Auth
 
-	_, m := buildMonitorStruct(d)
+	_, m := buildMonitorStruct(d, tagHelper)
 	i, err := strconv.ParseInt(d.Id(), 10, 64)
 	if err != nil {
 		return diag.FromErr(err)
