@@ -304,9 +304,10 @@ func resourceDatadogMonitor() *schema.Resource {
 					// we use TypeSet to represent tags, paradoxically to be able to maintain them ordered;
 					// we order them explicitly in the read/create/update methods of this resource and using
 					// TypeSet makes Terraform ignore differences in order when creating a plan
-					Type:     schema.TypeSet,
-					Optional: true,
-					Elem:     &schema.Schema{Type: schema.TypeString},
+					Type:             schema.TypeSet,
+					Optional:         true,
+					Elem:             &schema.Schema{Type: schema.TypeString},
+					DiffSuppressFunc: suppressDataDogTagDiff,
 				},
 				"groupby_simple_monitor": {
 					Description: "Whether or not to trigger one alert if any source breaches a threshold. This is only used by log monitors. Defaults to `false`.",
@@ -1320,4 +1321,25 @@ func suppressDataDogFloatIntDiff(_, old, new string, _ *schema.ResourceData) boo
 		return true
 	}
 	return false
+}
+
+// Ignore tag diffs if the only different thing is an ignored tag
+func suppressDataDogTagDiff(k, old, new string, d *schema.ResourceData) bool {
+	// https://github.com/hashicorp/terraform-plugin-sdk/issues/477#issuecomment-1238807249
+
+	providerConf := d.GetProviderMeta().()
+	apiInstances := providerConf.DatadogApiInstances
+	tagHelper := providerConf.TagHelper
+
+	lastDotIndex := strings.LastIndex(key, ".")
+	if lastDotIndex != -1 {
+		key = string(key[:lastDotIndex])
+	}
+	oldData, newData := d.GetChange(key)
+	if oldData == nil || newData == nil {
+		return false
+	}
+	oldTags := oldData.(map[string]string)
+	newTags := newData.(map[string]string)
+
 }
